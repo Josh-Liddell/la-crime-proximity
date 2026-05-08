@@ -1,19 +1,27 @@
-use rstar::{AABB, RTreeObject};
-use serde::Deserialize;
+use actix_web::web;
+use anyhow::Result;
+use csv::ReaderBuilder;
+use log::{info, warn};
+use rstar::{AABB, PointDistance, RTree, RTreeObject};
+use serde::{Deserialize, Serialize};
 
 // needs to impl r tree object or something
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct CrimeRecord {
-    #[serde(rename = "LAT")]
+    #[serde(alias = "DATE OCC")]
+    pub date: String,
+    #[serde(alias = "Premis Desc")]
+    pub premis: Option<String>,
+    #[serde(alias = "Weapon Desc")]
+    pub weapon: Option<String>,
+    #[serde(alias = "Crm Cd Desc")]
+    pub description: String,
+    #[serde(alias = "LAT")]
     pub lat: f64,
-    #[serde(rename = "LON")]
+    #[serde(alias = "LON")]
     pub lon: f64,
 }
 
-// have to work on understanding the below
-// --------------------------------------------
-
-// maybe need to add more, not sure
 impl RTreeObject for CrimeRecord {
     type Envelope = AABB<[f64; 2]>;
 
@@ -22,17 +30,36 @@ impl RTreeObject for CrimeRecord {
     }
 }
 
-// impl PointDistance for CrimeRecord
-// {
-//     fn distance_2(&self, point: &[f32; 2]) -> f32
-//     {
-//         let d_x = self.origin[0] - point[0];
-//         let d_y = self.origin[1] - point[1];
-//         let distance_to_origin = (d_x * d_x + d_y * d_y).sqrt();
-//         let distance_to_ring = distance_to_origin - self.radius;
-//         let distance_to_circle = f32::max(0.0, distance_to_ring);
-//         // We must return the squared distance!
-//         distance_to_circle * distance_to_circle
-//     }
+// its not taking into account the sphere of the earth
+impl PointDistance for CrimeRecord {
+    fn distance_2(&self, point: &[f64; 2]) -> f64 {
+        let dx = self.lat - point[0];
+        let dy = self.lon - point[1];
+        (dx * dx) + (dy * dy)
+    }
+}
 
-// }
+pub struct AppState {
+    pub crimes: RTree<CrimeRecord>,
+}
+
+pub fn load_crime_data() -> Result<web::Data<AppState>> {
+    info!("Loading crime data...");
+    let mut rdr = ReaderBuilder::new().from_path("data/Crime_Data_from_2020_to_2024.csv")?;
+
+    let records: Vec<CrimeRecord> = rdr
+        .deserialize()
+        .filter_map(|res| match res {
+            Ok(record) => Some(record),
+            Err(e) => {
+                warn!("Skipping invalid row: {}", e);
+                None
+            }
+        })
+        .collect();
+
+    let tree = RTree::bulk_load(records);
+    info!("Finished loading: {} rows", tree.size());
+
+    Ok(web::Data::new(AppState { crimes: tree }))
+}

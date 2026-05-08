@@ -1,11 +1,21 @@
-use actix_web::{Responder, get};
+use crate::crime::{AppState, CrimeRecord};
+use actix_web::{HttpResponse, Responder, get, web};
+use serde::Deserialize;
 
-#[get("/")]
-pub async fn hello() -> impl Responder {
-    // HttpResponse::Ok().body("Hello world!")
-    format!("Hello world!")
+#[derive(Debug, Deserialize)]
+struct Location {
+    lat: f64,
+    lon: f64,
+    count: usize,
 }
 
-// create a route for a post reqwest that will send in a lat and long and number for crimes
-// that will need to run the nearest neighbor function of the r tree and return results.
-// but first I have to finish impling traits for the rtree objects so that they can determine distance.
+#[get("/proximity")]
+async fn proximity(data: web::Data<AppState>, query: web::Query<Location>) -> impl Responder {
+    let results: Vec<&CrimeRecord> = data
+        .crimes
+        .nearest_neighbor_iter(&[query.lat, query.lon])
+        .take(query.count)
+        .collect();
+
+    HttpResponse::Ok().json(results)
+}
